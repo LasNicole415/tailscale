@@ -165,7 +165,9 @@ func (l *linkEndpoint) NumQueued() int {
 // returning an equivalent *stack.PacketBuffer if they are valid, otherwise nil.
 // The set of headers validated covers where gVisor would perform validation if
 // !stack.PacketBuffer.RXChecksumValidated, i.e. it satisfies
-// stack.CapabilityRXChecksumOffload.
+// stack.CapabilityRXChecksumOffload. Other protocols with checksum fields,
+// e.g. ICMP, are still validated by gVisor regardless of rx checksum offloading
+// capabilities.
 func rxChecksumOffload(p *packet.Parsed) *stack.PacketBuffer {
 	var (
 		pn        tcpip.NetworkProtocolNumber
