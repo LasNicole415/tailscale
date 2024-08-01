@@ -24,6 +24,13 @@ import (
 	"tailscale.com/sessionrecording"
 )
 
+// New wraps the provided network connection and returns a connection whose reads and writes will get triggered as data is received on the hijacked connection.
+// The connection must be a hijacked connection for a 'kubectl exec' session using SPDY.
+// The hijacked connection is used to transmit SPDY streams between Kubernetes client ('kubectl') and the destination container.
+// Data read from the underlying network connection is data sent via one of the SPDY streams from the client to the container.
+// Data written to the underlying connection is data sent from the container to the client.
+// We parse the data and send everything for the STDOUT/STDERR streams to the configured tsrecorder as an asciinema recording with the provided header.
+// https://github.com/kubernetes/enhancements/tree/master/keps/sig-api-machinery/4006-transition-spdy-to-websockets#background-remotecommand-subprotocol
 func New(nc net.Conn, rec *tsrecorder.Client, ch sessionrecording.CastHeader, log *zap.SugaredLogger) srconn.Conn {
 	return &conn{
 		Conn: nc,

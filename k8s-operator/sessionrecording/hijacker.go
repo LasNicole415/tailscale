@@ -34,13 +34,13 @@ import (
 )
 
 const (
-	SPDYProtocol protocol = "SPDY"
-	WSProtocol   protocol = "WebSockets"
+	SPDYProtocol Protocol = "SPDY"
+	WSProtocol   Protocol = "WebSocket"
 )
 
-// protocol is the streaming protocol of the hijacked session. Supported
-// protocols are SPDY.
-type protocol string
+// Protocol is the streaming protocol of the hijacked session. Supported
+// protocols are SPDY and WebSocket.
+type Protocol string
 
 var (
 	// CounterSessionRecordingsAttempted counts the number of session recording attempts.
@@ -50,7 +50,7 @@ var (
 	counterSessionRecordingsUploaded = clientmetric.NewCounter("k8s_auth_proxy_session_recordings_uploaded")
 )
 
-func New(ts *tsnet.Server, req *http.Request, who *apitype.WhoIsResponse, w http.ResponseWriter, pod, ns string, proto protocol, addrs []netip.AddrPort, failOpen bool, connFunc RecorderDialFn, log *zap.SugaredLogger) *Hijacker {
+func New(ts *tsnet.Server, req *http.Request, who *apitype.WhoIsResponse, w http.ResponseWriter, pod, ns string, proto Protocol, addrs []netip.AddrPort, failOpen bool, connFunc RecorderDialFn, log *zap.SugaredLogger) *Hijacker {
 	return &Hijacker{
 		ts:                ts,
 		req:               req,
@@ -81,7 +81,7 @@ type Hijacker struct {
 	addrs             []netip.AddrPort // tsrecorder addresses
 	failOpen          bool             // whether to fail open if recording fails
 	connectToRecorder RecorderDialFn
-	proto             protocol // streaming protocol
+	proto             Protocol // streaming protocol
 }
 
 // RecorderDialFn dials the specified netip.AddrPorts that should be tsrecorder
@@ -116,10 +116,14 @@ func (h *Hijacker) setUpRecording(ctx context.Context, conn net.Conn) (net.Conn,
 		// https://docs.asciinema.org/manual/asciicast/v2/
 		asciicastv2 = 2
 	)
-	var wc io.WriteCloser
+	var (
+		wc      io.WriteCloser
+		err     error
+		errChan <-chan error
+	)
 	h.log.Infof("kubectl exec session will be recorded, recorders: %v, fail open policy: %t", h.addrs, h.failOpen)
 	// TODO (irbekrm): send client a message that session will be recorded.
-	rw, _, errChan, err := h.connectToRecorder(ctx, h.addrs, h.ts.Dial)
+	wc, _, errChan, err = h.connectToRecorder(ctx, h.addrs, h.ts.Dial)
 	if err != nil {
 		msg := fmt.Sprintf("error connecting to session recorders: %v", err)
 		if h.failOpen {
@@ -136,7 +140,6 @@ func (h *Hijacker) setUpRecording(ctx context.Context, conn net.Conn) (net.Conn,
 
 	// TODO (irbekrm): log which recorder
 	h.log.Info("successfully connected to a session recorder")
-	wc = rw
 	cl := tstime.DefaultClock{}
 	rec := tsrecorder.New(wc, cl, cl.Now(), h.failOpen)
 	qp := h.req.URL.Query()

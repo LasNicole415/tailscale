@@ -42,7 +42,7 @@ type message struct {
 
 	// streamID is the stream to which the message belongs, i.e stdin, stout
 	// etc. It is one of the stream IDs defined in
-	// https://github.com/kubernetes/apimachinery/commit/73d12d09c5be8703587b5127416eb83dc3b7e182#diff-291f96e8632d04d2d20f5fb00f6b323492670570d65434e8eac90c7a442d13bdR23-R36
+	// https://github.com/kubernetes/apimachinery/blob/73d12d09c5be8703587b5127416eb83dc3b7e182/pkg/util/httpstream/wsstream/doc.go#L23-L36
 	streamID atomic.Uint32
 
 	// typ is the type of a WebsocketMessage as defined by its opcode
@@ -90,6 +90,7 @@ func (msg *message) Parse(b []byte, log *zap.SugaredLogger) (bool, error) {
 	if msg.typ != binaryMessage {
 		return false, fmt.Errorf("[unexpected] internal error: attempted to parse a message with type %d", msg.typ)
 	}
+	isInitialFragment := len(msg.raw) == 0
 
 	msg.isFinalized = isFinalFragment(b)
 
@@ -99,7 +100,7 @@ func (msg *message) Parse(b []byte, log *zap.SugaredLogger) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("error determining payload length: %w", err)
 	}
-	log.Debugf("parse: parsing a message with payload length: %d payload offset: %d maskOffset: %d mask set: %t, is finalized: %t", payloadLength, payloadOffset, maskOffset, maskSet, msg.isFinalized)
+	log.Debugf("parse: parsing a message fragment with payload length: %d payload offset: %d maskOffset: %d mask set: %t, is finalized: %t, is initial fragment: %t", payloadLength, payloadOffset, maskOffset, maskSet, msg.isFinalized, isInitialFragment)
 
 	if len(b) < int(payloadOffset)+int(payloadLength) { // incomplete fragment
 		return false, nil
@@ -126,11 +127,11 @@ func (msg *message) Parse(b []byte, log *zap.SugaredLogger) (bool, error) {
 		return false, errors.New("[unexpected] received a message fragment with no stream ID")
 	}
 
-	streamId := uint32(msgPayload[0])
-	if msg.streamID.Load() != 0 && msg.streamID.Load() != streamId {
-		return false, fmt.Errorf("[unexpected] received message fragments with mismatched streamIDs %d and %d", msg.streamID.Load(), streamId)
+	streamID := uint32(msgPayload[0])
+	if !isInitialFragment && msg.streamID.Load() != streamID {
+		return false, fmt.Errorf("[unexpected] received message fragments with mismatched streamIDs %d and %d", msg.streamID.Load(), streamID)
 	}
-	msg.streamID.Store(streamId)
+	msg.streamID.Store(streamID)
 
 	// This is normal, Kubernetes seem to send a couple data messages with
 	// no payloads at the start.

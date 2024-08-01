@@ -4,7 +4,7 @@
 //go:build !plan9
 
 // package ws has functionality to parse 'kubectl exec' sessions streamed using
-// WebSockets protocol.
+// WebSocket protocol.
 package ws
 
 import (
@@ -24,11 +24,13 @@ import (
 	"tailscale.com/util/multierr"
 )
 
-// New returns a wrapper around net.Conn that intercepts reads and writes for a
-// websocket streaming session over the provided net.Conn, parses the data as
-// websocket messages and sends message payloads for STDIN/STDOUT streams to a
-// tsrecorder instance using the provided client. Caller must ensure that the
-// session is streamed using WebSockets protocol.
+// New wraps the provided network connection and returns a connection whose reads and writes will get triggered as data is received on the hijacked connection.
+// The connection must be a hijacked connection for a 'kubectl exec' session using WebSocket protocol and a *.channel.k8s.io subprotocol.
+// The hijacked connection is used to transmit *.channel.k8s.io streams between Kubernetes client ('kubectl') and the destination proxy controlled by Kubernetes.
+// Data read from the underlying network connection is data sent via one of the streams from the client to the container.
+// Data written to the underlying connection is data sent from the container to the client.
+// We parse the data and send everything for the STDOUT/STDERR streams to the configured tsrecorder as an asciinema recording with the provided header.
+// https://github.com/kubernetes/enhancements/tree/master/keps/sig-api-machinery/4006-transition-spdy-to-websockets#proposal-new-remotecommand-sub-protocol-version---v5channelk8sio
 func New(c net.Conn, rec *tsrecorder.Client, ch sessionrecording.CastHeader, log *zap.SugaredLogger) srconn.Conn {
 	return &conn{
 		Conn: c,
@@ -77,7 +79,10 @@ type conn struct {
 }
 
 // Read reads bytes from the original connection and parses them as websocket
-// message fragments. If the message is for the resize stream, sets the width
+// message fragments.
+// Bytes read from the original connection are the bytes sent from the Kubernetes client (kubectl) to the destination container via kubelet.
+
+// If the message is for the resize stream, sets the width
 // and height of the CastHeader for this connection.
 // The fragment can be incomplete.
 func (c *conn) Read(b []byte) (int, error) {
@@ -145,7 +150,7 @@ func (c *conn) Read(b []byte) (int, error) {
 		}
 	}
 	c.currentReadMsg = readMsg
-	return n, err
+	return n, nil
 }
 
 // Write parses the written bytes as WebSocket message fragment. If the message
@@ -218,7 +223,7 @@ func (c *conn) Write(b []byte) (int, error) {
 	if err != nil {
 		c.log.Errorf("write: error writing to conn: %v", err)
 	}
-	return len(b), err
+	return len(b), nil
 }
 
 func (c *conn) Close() error {
@@ -246,17 +251,17 @@ func (c *conn) Fail() {
 // fragment written to the connection was incomplete and the following write
 // must be the remaining payload bytes of that fragment.
 func (c *conn) writeBufHasIncompleteFragment() bool {
-	return len(c.writeBuf.Bytes()) != 0
+	return c.writeBuf.Len() != 0
 }
 
 // readBufHasIncompleteFragment returns true if the latest data message
 // fragment read from the connection was incomplete and the following read
 // must be the remaining payload bytes of that fragment.
 func (c *conn) readBufHasIncompleteFragment() bool {
-	return len(c.readBuf.Bytes()) != 0
+	return c.readBuf.Len() != 0
 }
 
-// writeMsgIsIncomplete returns true if the latest WebSockets message written to
+// writeMsgIsIncomplete returns true if the latest WebSocket message written to
 // the connection was fragmented and the next data message fragment written to
 // the connection must be a fragment of that message.
 // https://www.rfc-editor.org/rfc/rfc6455#section-5.4
@@ -264,7 +269,7 @@ func (c *conn) writeMsgIsIncomplete() bool {
 	return c.currentWriteMsg != nil && !c.currentWriteMsg.isFinalized
 }
 
-// readMsgIsIncomplete returns true if the latest WebSockets message written to
+// readMsgIsIncomplete returns true if the latest WebSocket message written to
 // the connection was fragmented and the next data message fragment written to
 // the connection must be a fragment of that message.
 // https://www.rfc-editor.org/rfc/rfc6455#section-5.4
