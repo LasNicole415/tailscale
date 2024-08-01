@@ -228,10 +228,11 @@ func (l *linkEndpoint) injectInbound(p *packet.Parsed) {
 		return
 	}
 	pkt := rxChecksumOffload(p)
-	if pkt != nil {
-		d.DeliverNetworkPacket(pkt.NetworkProtocolNumber, pkt)
-		pkt.DecRef()
+	if pkt == nil {
+		return
 	}
+	d.DeliverNetworkPacket(pkt.NetworkProtocolNumber, pkt)
+	pkt.DecRef()
 }
 
 // enqueueGRO enqueues the provided packet for GRO. It may immediately deliver
@@ -242,17 +243,19 @@ func (l *linkEndpoint) injectInbound(p *packet.Parsed) {
 func (l *linkEndpoint) enqueueGRO(p *packet.Parsed) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	if l.gro.Dispatcher != nil {
-		pkt := rxChecksumOffload(p)
-		if pkt != nil {
-			// TODO(jwhited): gro.Enqueue() duplicates a lot of p.Decode().
-			//  We may want to push stack.PacketBuffer further up as a
-			//  replacement for packet.Parsed, or inversely push packet.Parsed
-			//  down into refactored GRO logic.
-			l.gro.Enqueue(pkt)
-			pkt.DecRef()
-		}
+	if l.gro.Dispatcher == nil {
+		return
 	}
+	pkt := rxChecksumOffload(p)
+	if pkt == nil {
+		return
+	}
+	// TODO(jwhited): gro.Enqueue() duplicates a lot of p.Decode().
+	//  We may want to push stack.PacketBuffer further up as a
+	//  replacement for packet.Parsed, or inversely push packet.Parsed
+	//  down into refactored GRO logic.
+	l.gro.Enqueue(pkt)
+	pkt.DecRef()
 }
 
 // flushGRO flushes previously enqueueGRO'd packets to the underlying
