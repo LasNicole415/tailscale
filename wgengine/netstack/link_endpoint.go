@@ -224,12 +224,13 @@ func (l *linkEndpoint) injectInbound(p *packet.Parsed) {
 	l.mu.RLock()
 	d := l.dispatcher
 	l.mu.RUnlock()
-	if d != nil {
-		pkt := rxChecksumOffload(p)
-		if pkt != nil {
-			d.DeliverNetworkPacket(pkt.NetworkProtocolNumber, pkt)
-			pkt.DecRef()
-		}
+	if d == nil {
+		return
+	}
+	pkt := rxChecksumOffload(p)
+	if pkt != nil {
+		d.DeliverNetworkPacket(pkt.NetworkProtocolNumber, pkt)
+		pkt.DecRef()
 	}
 }
 
