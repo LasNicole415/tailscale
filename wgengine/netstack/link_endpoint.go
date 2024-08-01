@@ -175,11 +175,11 @@ func rxChecksumOffload(p *packet.Parsed) *stack.PacketBuffer {
 
 	switch p.IPVersion {
 	case 4:
-		if len(buf) < 20 {
+		if len(buf) < header.IPv4MinimumSize {
 			return nil
 		}
 		csumStart = int((buf[0] & 0x0F) * 4)
-		if csumStart < 20 || csumStart > 60 || len(buf) < csumStart {
+		if csumStart < header.IPv4MinimumSize || csumStart > header.IPv4MaximumHeaderSize || len(buf) < csumStart {
 			return nil
 		}
 		if ^tun.Checksum(buf[:csumStart], 0) != 0 {
@@ -187,10 +187,10 @@ func rxChecksumOffload(p *packet.Parsed) *stack.PacketBuffer {
 		}
 		pn = header.IPv4ProtocolNumber
 	case 6:
-		if len(buf) < 40 {
+		if len(buf) < header.IPv6FixedHeaderSize {
 			return nil
 		}
-		csumStart = 40
+		csumStart = header.IPv6FixedHeaderSize
 		pn = header.IPv6ProtocolNumber
 	}
 
