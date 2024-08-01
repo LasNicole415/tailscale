@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"expvar"
 	"fmt"
 	"io"
 	"log"
@@ -285,7 +286,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.HasPrefix(r.URL.Path, "/metrics") {
-		varz.Handler(w, r)
+		filter := func(kv expvar.KeyValue) bool {
+			return strings.HasPrefix(kv.Key, "tailscaled")
+		}
+		varz.FilteredHandler(filter)(w, r)
 		return
 	}
 

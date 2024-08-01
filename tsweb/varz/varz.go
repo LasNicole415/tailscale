@@ -273,19 +273,29 @@ type sortedKVs struct {
 //
 // This will evolve over time, or perhaps be replaced.
 func Handler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain;version=0.0.4;charset=utf-8")
+	FilteredHandler(nil)(w, r)
+}
 
-	s := sortedKVsPool.Get().(*sortedKVs)
-	defer sortedKVsPool.Put(s)
-	s.kvs = s.kvs[:0]
-	expvarDo(func(kv expvar.KeyValue) {
-		s.kvs = append(s.kvs, sortedKV{kv, removeTypePrefixes(kv.Key)})
-	})
-	sort.Slice(s.kvs, func(i, j int) bool {
-		return s.kvs[i].sortKey < s.kvs[j].sortKey
-	})
-	for _, e := range s.kvs {
-		writePromExpVar(w, "", e.KeyValue)
+// FilteredHandler handler returns a Handler like above, but takes an optional
+// func to evaluate if a metric should be included or not.
+func FilteredHandler(shouldKeep func(expvar.KeyValue) bool) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain;version=0.0.4;charset=utf-8")
+
+		s := sortedKVsPool.Get().(*sortedKVs)
+		defer sortedKVsPool.Put(s)
+		s.kvs = s.kvs[:0]
+		expvarDo(func(kv expvar.KeyValue) {
+			s.kvs = append(s.kvs, sortedKV{kv, removeTypePrefixes(kv.Key)})
+		})
+		sort.Slice(s.kvs, func(i, j int) bool {
+			return s.kvs[i].sortKey < s.kvs[j].sortKey
+		})
+		for _, e := range s.kvs {
+			if shouldKeep == nil || shouldKeep(e.KeyValue) {
+				writePromExpVar(w, "", e.KeyValue)
+			}
+		}
 	}
 }
 
