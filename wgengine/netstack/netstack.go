@@ -242,6 +242,13 @@ const nicID = 1
 // have a UDP packet as big as the MTU.
 const maxUDPPacketSize = tstun.MaxPacketSize
 
+const (
+	// tcpRXBufSize & tcpTXBufSize mirror modern Ubuntu's tcp_rmem and tcp_wmem
+	// "max" values.
+	tcpRXBufSize = 6 << 20 // 6MiB
+	tcpTXBufSize = 4 << 20 // 4MiB
+)
+
 // Create creates and populates a new Impl.
 func Create(logf logger.Logf, tundev *tstun.Wrapper, e wgengine.Engine, mc *magicsock.Conn, dialer *tsdial.Dialer, dns *dns.Manager, pm *proxymap.Mapper, driveForLocal drive.FileSystemForLocal) (*Impl, error) {
 	if mc == nil {
@@ -289,6 +296,41 @@ func Create(logf logger.Logf, tundev *tstun.Wrapper, e wgengine.Engine, mc *magi
 		linkEP.SupportedGSOKind = stack.HostGSOSupported
 	} else {
 		linkEP = newLinkEndpoint(512, uint32(tstun.DefaultTUNMTU()), "", disableGRO)
+	}
+	// tcpip.TCP{Receive,Send}BufferSizeRangeOption is gVisor's version of
+	// Linux's tcp_{r,w}mem. Application within gVisor differs as some Linux
+	// features of are not (yet) implemented, and socket buffer memory is not
+	// completely controlled within gVisor, e.g. we allocate
+	// *stack.PacketBuffer's for the write path within Tailscale. Therefore, we
+	// loosen our understanding of the relationship between these Linux and
+	// gVisor tunables, and set a singular value across min, default, and max.
+	// The chosen value is biased towards higher throughput on high
+	// bandwidth-delay product paths.
+	tcpRXBufOpt := tcpip.TCPReceiveBufferSizeRangeOption{
+		// Min is unused by gVisor at the time of writing, but partially plumbed
+		// for application by the TCP_WINDOW_CLAMP socket option.
+		Min: tcpRXBufSize,
+		// Default is used by gVisor at socket creation.
+		Default: tcpRXBufSize,
+		// Max is used by gVisor to cap the advertised receive window post-read.
+		// (tcp_moderate_rcvbuf=true, the default).
+		Max: tcpRXBufSize,
+	}
+	tcpipErr = ipstack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpRXBufOpt)
+	if tcpipErr != nil {
+		return nil, fmt.Errorf("could not set TCP RX buf size: %v", tcpipErr)
+	}
+	tcpTXBufOpt := tcpip.TCPSendBufferSizeRangeOption{
+		// Min in unused by gVisor at the time of writing.
+		Min: tcpTXBufSize,
+		// Default is used by gVisor at socket creation.
+		Default: tcpTXBufSize,
+		// Max is used by gVisor to cap the send window.
+		Max: tcpTXBufSize,
+	}
+	tcpipErr = ipstack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpTXBufOpt)
+	if tcpipErr != nil {
+		return nil, fmt.Errorf("could not set TCP TX buf size: %v", tcpipErr)
 	}
 	if tcpipProblem := ipstack.CreateNIC(nicID, linkEP); tcpipProblem != nil {
 		return nil, fmt.Errorf("could not create netstack NIC: %v", tcpipProblem)
@@ -514,9 +556,7 @@ func (ns *Impl) Start(lb *ipnlocal.LocalBackend) error {
 		panic("nil LocalBackend")
 	}
 	ns.lb = lb
-	// size = 0 means use default buffer size
-	const tcpReceiveBufferSize = 0
-	tcpFwd := tcp.NewForwarder(ns.ipstack, tcpReceiveBufferSize, maxInFlightConnectionAttempts(), ns.acceptTCP)
+	tcpFwd := tcp.NewForwarder(ns.ipstack, tcpRXBufSize, maxInFlightConnectionAttempts(), ns.acceptTCP)
 	udpFwd := udp.NewForwarder(ns.ipstack, ns.acceptUDP)
 	ns.ipstack.SetTransportProtocolHandler(tcp.ProtocolNumber, ns.wrapTCPProtocolHandler(tcpFwd.HandlePacket))
 	ns.ipstack.SetTransportProtocolHandler(udp.ProtocolNumber, ns.wrapUDPProtocolHandler(udpFwd.HandlePacket))
